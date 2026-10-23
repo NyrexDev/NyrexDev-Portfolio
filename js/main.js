@@ -15,7 +15,10 @@
     btn.setAttribute('aria-expanded', open);
   });
 
-  // ---- find images in the Portfolio folder ----
+  // ---- find media in the Portfolio folder ----
+  const MEDIA = /\.(png|jpe?g|gif|webp|avif|mp4|mov|webm)$/i;
+  const isVideo = f => /\.(mp4|mov|webm)$/i.test(f);
+
   function repoInfo() {
     const r = cfg.repo || {};
     if (r.owner && r.name) return r;
@@ -29,7 +32,7 @@
 
   async function getImages() {
     try {
-      const c = JSON.parse(sessionStorage.getItem('nx-img') || 'null');
+      const c = JSON.parse(sessionStorage.getItem('nx-img2') || 'null');
       if (c && Date.now() - c.t < 120000) return c.list;
     } catch (e) {}
     let list = null;
@@ -39,7 +42,7 @@
         const q = branch ? '?ref=' + encodeURIComponent(branch) : '';
         const res = await fetch(`https://api.github.com/repos/${owner}/${name}/contents/Portfolio${q}`);
         if (res.ok) {
-          list = (await res.json()).filter(f => f.type === 'file' && /\.(png|jpe?g|gif|webp|avif)$/i.test(f.name)).map(f => f.name);
+          list = (await res.json()).filter(f => f.type === 'file' && MEDIA.test(f.name)).map(f => f.name);
         }
       } catch (e) {}
     }
@@ -47,29 +50,39 @@
       try { const r = await fetch('portfolio.json'); if (r.ok) list = await r.json(); } catch (e) {}
     }
     list = (list || []).sort(new Intl.Collator(undefined, { numeric: true }).compare);
-    try { sessionStorage.setItem('nx-img', JSON.stringify({ t: Date.now(), list })); } catch (e) {}
+    try { sessionStorage.setItem('nx-img2', JSON.stringify({ t: Date.now(), list })); } catch (e) {}
     return list;
   }
 
   // ---- lightbox ----
   let files = [], idx = 0;
   const lb = document.createElement('div');
-  lb.className = 'lb'; lb.setAttribute('role', 'dialog'); lb.setAttribute('aria-modal', 'true'); lb.setAttribute('aria-label', 'Image viewer');
-  lb.innerHTML = '<button class="x" aria-label="Close">&times;</button><button class="prev" aria-label="Previous">&#8249;</button><img alt=""><button class="next" aria-label="Next">&#8250;</button><span class="count"></span>';
+  lb.className = 'lb'; lb.setAttribute('role', 'dialog'); lb.setAttribute('aria-modal', 'true'); lb.setAttribute('aria-label', 'Media viewer');
+  lb.innerHTML = '<button class="x" aria-label="Close">&times;</button><button class="prev" aria-label="Previous">&#8249;</button><img alt=""><video controls playsinline hidden></video><button class="next" aria-label="Next">&#8250;</button><span class="count"></span>';
   document.body.appendChild(lb);
-  const big = $('img', lb), count = $('.count', lb);
+  const bigImg = $('img', lb), bigVid = $('video', lb), count = $('.count', lb);
   const src = f => 'Portfolio/' + encodeURIComponent(f);
   const alt = f => f.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ');
 
+  function stopVideo() { bigVid.pause(); bigVid.removeAttribute('src'); bigVid.load(); }
+
   function show(i) {
     idx = (i + files.length) % files.length;
-    big.src = src(files[idx]); big.alt = alt(files[idx]);
+    const f = files[idx], v = isVideo(f);
+    bigImg.hidden = v; bigVid.hidden = !v;
+    if (v) {
+      bigImg.removeAttribute('src');
+      bigVid.src = src(f);
+      bigVid.play().catch(() => {});
+    } else {
+      stopVideo();
+      bigImg.src = src(f); bigImg.alt = alt(f);
+    }
     count.textContent = files.length > 1 ? `${idx + 1} / ${files.length}` : '';
-    lb.classList.toggle('single', files.length < 2);
     $('.prev', lb).style.display = $('.next', lb).style.display = files.length < 2 ? 'none' : '';
   }
   const open = i => { show(i); lb.classList.add('open'); document.body.style.overflow = 'hidden'; $('.x', lb).focus(); };
-  const close = () => { lb.classList.remove('open'); document.body.style.overflow = ''; };
+  const close = () => { lb.classList.remove('open'); document.body.style.overflow = ''; stopVideo(); };
   lb.addEventListener('click', e => {
     if (e.target === lb || e.target.classList.contains('x')) close();
     else if (e.target.classList.contains('prev')) show(idx - 1);
@@ -87,12 +100,21 @@
     target.innerHTML = '';
     list.forEach(f => {
       const b = document.createElement('button');
-      b.className = 'item'; b.type = 'button'; b.setAttribute('aria-label', 'View ' + alt(f));
-      const im = new Image();
-      im.loading = 'lazy'; im.alt = alt(f); im.src = src(f);
-      im.onload = () => im.classList.add('ok');
-      im.onerror = () => b.remove();
-      b.appendChild(im);
+      b.className = 'item'; b.type = 'button'; b.setAttribute('aria-label', (isVideo(f) ? 'Play ' : 'View ') + alt(f));
+      let el;
+      if (isVideo(f)) {
+        el = document.createElement('video');
+        el.muted = true; el.playsInline = true; el.preload = 'metadata';
+        el.src = src(f) + '#t=0.1';
+        el.addEventListener('loadeddata', () => el.classList.add('ok'));
+        b.classList.add('is-video');
+      } else {
+        el = new Image();
+        el.loading = 'lazy'; el.alt = alt(f); el.src = src(f);
+        el.onload = () => el.classList.add('ok');
+      }
+      el.onerror = () => b.remove();
+      b.appendChild(el);
       b.addEventListener('click', () => open(files.indexOf(f)));
       target.appendChild(b);
     });
@@ -102,7 +124,7 @@
   if (gallery || strip) getImages().then(list => {
     files = list;
     if (gallery) {
-      if (!list.length) gallery.innerHTML = '<p class="note">No projects yet. Upload images to the Portfolio folder and they will appear here.</p>';
+      if (!list.length) gallery.innerHTML = '<p class="note">No projects yet. Upload images or videos to the Portfolio folder and they will appear here.</p>';
       else render(gallery, list);
     }
     if (strip) {
